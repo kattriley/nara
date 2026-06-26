@@ -1,9 +1,8 @@
 #include "main.h"
-#include "browser_window.h"
+#include <shellapi.h>
 
 HWND gMainHwnd = nullptr;
-BrowserWindow* gBrowser = nullptr;
-
+bool gIsDark = false;
 static HBRUSH gToolbarBrush = nullptr;
 
 static void CreateToolbar(HWND parent) {
@@ -18,26 +17,18 @@ static void CreateToolbar(HWND parent) {
   btn(kIdPinterestButton, L"Pinterest");
   btn(kIdRobloxButton,    L"Roblox");
   btn(kIdDiscordButton,   L"Discord");
-  x += 8;
-  btn(kIdImportCookies,   L"Import");
-  btn(kIdExportCookies,   L"Export");
-  x += 8;
-  btn(kIdPasswordsButton, L"Passwords");
+  x += 24;
   btn(kIdSettingsButton,  L"Settings");
-}
-
-static void ResizeChildren(HWND hwnd) {
-  if (!gBrowser) return;
-  RECT rc;
-  GetClientRect(hwnd, &rc);
-  rc.top += kToolbarHeight;
-  gBrowser->Resize();
 }
 
 static void UpdateToolbarBrush(bool dark) {
   if (gToolbarBrush) DeleteObject(gToolbarBrush);
   gToolbarBrush = CreateSolidBrush(dark ? RGB(45, 45, 45) : GetSysColor(COLOR_MENU));
   InvalidateRect(gMainHwnd, nullptr, TRUE);
+}
+
+void NavigateFirefox(const wchar_t* url) {
+  ShellExecuteW(nullptr, L"open", L"firefox.exe", url, nullptr, SW_SHOW);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -54,83 +45,49 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
       RECT toolbarRc = rc;
       toolbarRc.bottom = kToolbarHeight;
       FillRect(dc, &toolbarRc, gToolbarBrush);
-      RECT webRc = rc;
-      webRc.top = kToolbarHeight;
-      FillRect(dc, &webRc, (HBRUSH)GetStockObject(WHITE_BRUSH));
+      RECT clientRc = rc;
+      clientRc.top = kToolbarHeight;
+      FillRect(dc, &clientRc, (HBRUSH)GetStockObject(WHITE_BRUSH));
       return TRUE;
     }
 
-    case WM_SIZE:
-      ResizeChildren(hwnd);
-      break;
+    case WM_PAINT: {
+      PAINTSTRUCT ps;
+      HDC dc = BeginPaint(hwnd, &ps);
+      RECT rc;
+      GetClientRect(hwnd, &rc);
+      rc.top = kToolbarHeight;
+      SetBkMode(dc, TRANSPARENT);
+      SetTextColor(dc, gIsDark ? RGB(200,200,200) : RGB(100,100,100));
+      HGDIOBJ oldFont = SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
+      const wchar_t* msg = L"Klik een knop om Firefox te openen";
+      DrawTextW(dc, msg, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+      SelectObject(dc, oldFont);
+      EndPaint(hwnd, &ps);
+      return 0;
+    }
 
     case WM_COMMAND:
       switch (LOWORD(wParam)) {
-        case kIdGoogleButton:
-          if (gBrowser) gBrowser->Navigate(L"https://www.google.com");
-          break;
-        case kIdPinterestButton:
-          if (gBrowser) gBrowser->Navigate(L"https://www.pinterest.com");
-          break;
-        case kIdRobloxButton:
-          if (gBrowser) gBrowser->Navigate(L"https://www.roblox.com");
-          break;
-        case kIdDiscordButton:
-          if (gBrowser) gBrowser->Navigate(L"https://discord.com");
-          break;
-        case kIdImportCookies:
-          if (gBrowser) gBrowser->ImportCookies();
-          break;
-        case kIdExportCookies:
-          if (gBrowser) gBrowser->ExportCookies();
-          break;
-        case kIdAccelReload:
-          if (gBrowser) gBrowser->Reload();
-          break;
+        case kIdGoogleButton:     NavigateFirefox(L"https://www.google.com"); break;
+        case kIdPinterestButton:  NavigateFirefox(L"https://www.pinterest.com"); break;
+        case kIdRobloxButton:     NavigateFirefox(L"https://www.roblox.com"); break;
+        case kIdDiscordButton:    NavigateFirefox(L"https://discord.com"); break;
+        case kIdAccelReload:      NavigateFirefox(L""); break;
         case kIdSettingsButton: {
           HMENU menu = CreatePopupMenu();
-          AppendMenuW(menu, MF_STRING, kIdToggleTheme,
-                      gBrowser && gBrowser->IsDark() ? L"Light Mode" : L"Dark Mode");
+          AppendMenuW(menu, MF_STRING, kIdToggleTheme, gIsDark ? L"Light Mode" : L"Dark Mode");
           POINT pt;
           GetCursorPos(&pt);
           SetForegroundWindow(hwnd);
-          TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON,
-                         pt.x, pt.y, 0, hwnd, nullptr);
+          TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
           DestroyMenu(menu);
           break;
         }
         case kIdToggleTheme:
-          if (gBrowser) {
-            gBrowser->ToggleTheme();
-            UpdateToolbarBrush(gBrowser->IsDark());
-          }
-          break;
-        case kIdPasswordsButton: {
-          HMENU menu = CreatePopupMenu();
-          AppendMenuW(menu, MF_STRING, kIdPmSave,     L"Save This Login");
-          AppendMenuW(menu, MF_STRING, kIdPmAutofill, L"Auto-fill");
-          AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-          AppendMenuW(menu, MF_STRING, kIdPmView,     L"View Passwords");
-          AppendMenuW(menu, MF_STRING, kIdPmClear,    L"Clear All");
-          POINT pt;
-          GetCursorPos(&pt);
-          SetForegroundWindow(hwnd);
-          TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON,
-                         pt.x, pt.y, 0, hwnd, nullptr);
-          DestroyMenu(menu);
-          break;
-        }
-        case kIdPmSave:
-          if (gBrowser) gBrowser->SavePassword();
-          break;
-        case kIdPmAutofill:
-          if (gBrowser) gBrowser->AutoFillPassword();
-          break;
-        case kIdPmView:
-          if (gBrowser) gBrowser->ViewPasswords();
-          break;
-        case kIdPmClear:
-          if (gBrowser) gBrowser->ClearPasswords();
+          gIsDark = !gIsDark;
+          UpdateToolbarBrush(gIsDark);
+          InvalidateRect(hwnd, nullptr, TRUE);
           break;
       }
       break;
@@ -143,9 +100,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
   return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-HWND CreateMainWindow(HINSTANCE hInstance) {
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
   const wchar_t kClassName[] = L"NaraWindow";
-
   WNDCLASSEXW wc = {};
   wc.cbSize = sizeof(wc);
   wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -155,19 +111,16 @@ HWND CreateMainWindow(HINSTANCE hInstance) {
   wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
   wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
   wc.lpszClassName = kClassName;
-
   RegisterClassExW(&wc);
 
-  DWORD style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
+  DWORD style = WS_OVERLAPPEDWINDOW;
   RECT rc = {0, 0, kWindowWidth, kWindowHeight};
   AdjustWindowRect(&rc, style, FALSE);
 
-  HWND hwnd = CreateWindowExW(
-      0, kClassName, L"Nara",
-      style, CW_USEDEFAULT, CW_USEDEFAULT,
-      rc.right - rc.left, rc.bottom - rc.top,
-      nullptr, nullptr, hInstance, nullptr);
-
+  HWND hwnd = CreateWindowExW(0, kClassName, L"nara",
+    style, CW_USEDEFAULT, CW_USEDEFAULT,
+    rc.right - rc.left, rc.bottom - rc.top,
+    nullptr, nullptr, hInstance, nullptr);
   gMainHwnd = hwnd;
 
   HICON hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(1));
@@ -178,19 +131,9 @@ HWND CreateMainWindow(HINSTANCE hInstance) {
 
   ShowWindow(hwnd, SW_SHOW);
   UpdateWindow(hwnd);
-  return hwnd;
-}
-
-int APIENTRY WinMain(HINSTANCE hInstance,
-                     HINSTANCE, LPSTR, int) {
-  HWND hwnd = CreateMainWindow(hInstance);
 
   ACCEL accel = { FCONTROL, 'R', kIdAccelReload };
   HACCEL hAccel = CreateAcceleratorTableW(&accel, 1);
-
-  BrowserWindow browser;
-  gBrowser = &browser;
-  browser.Initialize(hwnd);
 
   MSG msg;
   while (GetMessage(&msg, nullptr, 0, 0)) {
