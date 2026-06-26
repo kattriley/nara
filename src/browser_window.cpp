@@ -679,10 +679,9 @@ void BrowserWindow::ClearPasswords() {
 }
 
 // -------------------------------------------------------------------
-// Chrome cookie import via SQLite parsing
+// Multi-browser cookie import (SQLite parser)
 // -------------------------------------------------------------------
 
-// Read a SQLite varint, advances pointer
 static uint64_t ReadVarint(const uint8_t*& p) {
   uint64_t v = 0;
   for (int i = 0; i < 9; i++) {
@@ -692,29 +691,23 @@ static uint64_t ReadVarint(const uint8_t*& p) {
   return v;
 }
 
-void BrowserWindow::ImportChromeCookies() {
-  wchar_t chromePath[MAX_PATH];
-  GetEnvironmentVariableW(L"LOCALAPPDATA", chromePath, MAX_PATH);
-  wcscat_s(chromePath, L"\\Google\\Chrome\\User Data\\Default\\Cookies");
-
-  // Copy to temp (Chrome might have the file locked)
+// Import cookies from a single SQLite cookie file into mgr
+// tableName: "cookies" (Chrome) or "moz_cookies" (Firefox)
+// Returns number imported, or UINT32_MAX on failure
+static UINT32 ImportCookiesFromFile(ICoreWebView2CookieManager* mgr,
+                                     const wchar_t* filePath,
+                                     const char* tableName) {
   wchar_t tmpPath[MAX_PATH];
   GetTempPathW(MAX_PATH, tmpPath);
-  wcscat_s(tmpPath, L"nara_chrome_cookies.tmp");
-  if (!CopyFileW(chromePath, tmpPath, FALSE)) {
-    MessageBoxA(nullptr, "Chrome cookies bestand niet gevonden.\nZorg dat Chrome bestaat en gesloten is.", "Chrome Import", MB_OK);
-    return;
-  }
+  wcscat_s(tmpPath, L"nara_cookies.tmp");
+  if (!CopyFileW(filePath, tmpPath, FALSE)) return UINT32_MAX;
 
   HANDLE hFile = CreateFileW(tmpPath, GENERIC_READ, FILE_SHARE_READ, nullptr,
                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (hFile == INVALID_HANDLE_VALUE) {
-    MessageBoxA(nullptr, "Kan Chrome cookies niet lezen.", "Chrome Import", MB_OK);
-    return;
-  }
+  if (hFile == INVALID_HANDLE_VALUE) { DeleteFileW(tmpPath); return UINT32_MAX; }
 
   DWORD fsize = GetFileSize(hFile, nullptr);
-  if (fsize < 100) { CloseHandle(hFile); return; }
+  if (fsize < 100) { CloseHandle(hFile); DeleteFileW(tmpPath); return UINT32_MAX; }
 
   std::vector<uint8_t> data(fsize);
   DWORD rd = 0;
@@ -722,38 +715,19 @@ void BrowserWindow::ImportChromeCookies() {
   CloseHandle(hFile);
   DeleteFileW(tmpPath);
 
-  // SQLite header
-  if (memcmp(data.data(), "SQLite format 3\0", 16) != 0) {
-    MessageBoxA(nullptr, "Geen geldig SQLite bestand.", "Chrome Import", MB_OK);
-    return;
-  }
+  if (memcmp(data.data(), "SQLite format 3\0", 16) != 0) return UINT32_MAX;
 
-  uint32_t pageSize = *(uint16_t*)(data.data() + 16); // big-endian
-  pageSize = (pageSize << 8) | (pageSize >> 8);       // swap bytes
+  uint32_t pageSize = *(uint16_t*)(data.data() + 16);
+  pageSize = (pageSize << 8) | (pageSize >> 8);
   if (pageSize == 1) pageSize = 65536;
 
-  // Read sqlite_master to find the root page of the "cookies" table
-  // Page 1 starts at offset 0 (first 100 bytes is header, rest is page data)
-  uint32_t cookiesRootPage = 0;
-  auto getPage = [&](uint32_t pg) -> const uint8_t* {
-    return data.data() + (pg == 1 ? 0 : (pg - 1) * pageSize);
-  };
-
-  // Page 1: sqlite_master table (always leaf/interior table at page 1)
-  const uint8_t* p1 = data.data() + (pageSize > 100 ? 100 : 0);
-  // p1 now points to page 1 content (after the header)
-  // The first byte is the page type
-  // For simplicity, scan all leaf table pages for the cookies table
-  // sqlite_master schema: type, name, tbl_name, rootpage, sql
-  // We search for tbl_name = 'cookies'
-
-  // Recursive search for the cookies table
-  struct FindCookies {
+  // Find root page of the cookie table
+  struct FindTable {
     const std::vector<uint8_t>& data;
     uint32_t pageSize;
+    const char* tableName;
+    size_t tableLen;
     uint32_t result = 0;
-
-    FindCookies(const std::vector<uint8_t>& d, uint32_t ps) : data(d), pageSize(ps) {}
 
     void SearchPage(uint32_t pg) {
       if (pg == 0 || (pg - 1) * pageSize >= data.size()) return;
@@ -762,114 +736,55 @@ void BrowserWindow::ImportChromeCookies() {
       uint16_t cells = *(uint16_t*)(p + 3);
       cells = (cells >> 8) | (cells << 8);
 
-      if (type == 0x0D) { // leaf table
-        uint16_t* cellPtrs = (uint16_t*)(p + 8);
-        for (int i = 0; i < cells; i++) {
-          uint16_t off = cellPtrs[i];
-          off = (off >> 8) | (off << 8);
-          const uint8_t* cell = p + off;
-          const uint8_t* cp = cell;
-          ReadVarint(cp); // payload length
-          ReadVarint(cp); // row id
-          ReadVarint(cp); // header size
-          // Read columns: type, name, tbl_name, rootpage, sql
-          // Column 0 (type): serial type
-          // Column 1 (name): 
-          // Column 2 (tbl_name): 
-          // Column 3 (rootpage): 
-          // Read the 5 header serial types
-          uint64_t ser[5];
-          for (int j = 0; j < 5; j++) ser[j] = ReadVarint(cp);
-          // Extract tbl_name (column 2, index 2)
-          // Skip type (col 0)
-          if (ser[0] >= 12) cp += (ser[0] - 12) / 2;
-          // Skip name (col 1)
-          if (ser[1] >= 12) cp += (ser[1] - 12) / 2;
-          // Read tbl_name (col 2)
-          if (ser[2] >= 12) {
-            size_t len = (ser[2] - 12) / 2;
-            if (len == 7 && memcmp(cp, "cookies", 7) == 0) {
-              // Found! Now read rootpage (col 3)
-              cp += len;
-              if (ser[3] >= 12) cp += (ser[3] - 12) / 2;
-              else if (ser[3] == 1) { result = *cp++; }
-              // sqlite stores integers in big-endian
-              if (ser[3] == 4) {
-                result = (cp[0] << 24) | (cp[1] << 16) | (cp[2] << 8) | cp[3];
-              } else if (ser[3] == 3) {
-                result = (cp[0] << 16) | (cp[1] << 8) | cp[2];
-              } else if (ser[3] == 2) {
-                result = (cp[0] << 8) | cp[1];
-              } else if (ser[3] == 1) {
-                result = cp[0];
-              }
-            }
+      auto checkRow = [&](const uint8_t* cell) -> bool {
+        const uint8_t* cp = cell;
+        ReadVarint(cp); ReadVarint(cp); ReadVarint(cp); // payload len, rowid, header sz
+        uint64_t ser[5];
+        for (int j = 0; j < 5; j++) ser[j] = ReadVarint(cp);
+        if (ser[0] >= 12) cp += (ser[0] - 12) / 2;
+        if (ser[1] >= 12) cp += (ser[1] - 12) / 2;
+        if (ser[2] >= 12) {
+          size_t len = (ser[2] - 12) / 2;
+          if (len == tableLen && memcmp(cp, tableName, len) == 0) {
+            cp += len;
+            if (ser[3] == 4) result = (cp[0]<<24)|(cp[1]<<16)|(cp[2]<<8)|cp[3];
+            else if (ser[3] == 3) result = (cp[0]<<16)|(cp[1]<<8)|cp[2];
+            else if (ser[3] == 2) result = (cp[0]<<8)|cp[1];
+            else if (ser[3] == 1) result = cp[0];
+            return true;
           }
-          if (result) return;
         }
-      } else if (type == 0x05) { // interior table
+        return false;
+      };
+
+      if (type == 0x0D) {
         uint16_t* cellPtrs = (uint16_t*)(p + 8);
         for (int i = 0; i < cells; i++) {
-          uint16_t off = cellPtrs[i];
-          off = (off >> 8) | (off << 8);
-          const uint8_t* cell = p + off;
-          uint32_t childPage = (cell[0] << 24) | (cell[1] << 16) | (cell[2] << 8) | cell[3];
-          const uint8_t* cp = cell + 4;
-          ReadVarint(cp); // payload len
-          ReadVarint(cp); // row id
-          ReadVarint(cp); // header size
-          uint64_t ser[5];
-          for (int j = 0; j < 5; j++) ser[j] = ReadVarint(cp);
-          if (ser[0] >= 12) cp += (ser[0] - 12) / 2;
-          if (ser[1] >= 12) cp += (ser[1] - 12) / 2;
-          if (ser[2] >= 12) {
-            size_t len = (ser[2] - 12) / 2;
-            if (len == 7 && memcmp(cp, "cookies", 7) == 0) {
-              if (ser[3] >= 12) cp += (ser[3] - 12) / 2;
-              if (ser[3] == 4) {
-                result = (cp[0] << 24) | (cp[1] << 16) | (cp[2] << 8) | cp[3];
-              } else if (ser[3] == 3) {
-                result = (cp[0] << 16) | (cp[1] << 8) | cp[2];
-              } else if (ser[3] == 2) {
-                result = (cp[0] << 8) | cp[1];
-              } else if (ser[3] == 1) {
-                result = cp[0];
-              }
-            }
-          }
-          if (result) return;
-          SearchPage(childPage);
+          uint16_t off = (cellPtrs[i] >> 8) | (cellPtrs[i] << 8);
+          if (checkRow(p + off)) return;
+        }
+      } else if (type == 0x05) {
+        uint16_t* cellPtrs = (uint16_t*)(p + 8);
+        for (int i = 0; i < cells; i++) {
+          uint16_t off = (cellPtrs[i] >> 8) | (cellPtrs[i] << 8);
+          const uint8_t* cp = p + off;
+          uint32_t child = (cp[0]<<24)|(cp[1]<<16)|(cp[2]<<8)|cp[3];
+          if (checkRow(cp + 4)) return;
+          SearchPage(child);
           if (result) return;
         }
       }
     }
   };
 
-  FindCookies finder(data, pageSize);
-  finder.SearchPage(1);
-  uint32_t rootPage = finder.result;
+  FindTable ft{data, pageSize, tableName, strlen(tableName), 0};
+  ft.SearchPage(1);
+  uint32_t rootPage = ft.result;
+  if (!rootPage) return 0;
 
-  if (!rootPage) {
-    MessageBoxA(nullptr, "Geen cookies tabel gevonden in Chrome.", "Chrome Import", MB_OK);
-    return;
-  }
-
-  // Now iterate the cookies table leaf pages
-  if (!webview_) return;
-  ICoreWebView2_2* wv2 = nullptr;
-  HRESULT hr = webview_->QueryInterface(IID_ICoreWebView2_2, (void**)&wv2);
-  if (FAILED(hr) || !wv2) {
-    MessageBoxA(nullptr, "Kan CookieManager niet openen.", "Chrome Import", MB_OK);
-    return;
-  }
-  ICoreWebView2CookieManager* mgr = nullptr;
-  wv2->get_CookieManager(&mgr);
-  wv2->Release();
-  if (!mgr) return;
-
+  // Walk cookie table
   UINT32 imported = 0;
-  // Process leaf pages
-  struct CookieWalker {
+  struct Walker {
     const std::vector<uint8_t>& data;
     uint32_t pageSize;
     ICoreWebView2CookieManager* mgr;
@@ -885,126 +800,145 @@ void BrowserWindow::ImportChromeCookies() {
 
       if (type == 0x0D) {
         for (int i = 0; i < cells; i++) {
-          uint16_t off = cellPtrs[i];
-          off = (off >> 8) | (off << 8);
-          const uint8_t* cell = p + off;
-          const uint8_t* cp = cell;
-          ReadVarint(cp); // payload length
-          ReadVarint(cp); // row id
-          ReadVarint(cp); // header size = N_cols + 1 varints
-          // We know the cookies table has 18 columns (Chrome)
-          // Read serial types for columns 1-17 (skip col 0 creation_utc)
+          uint16_t off = (cellPtrs[i] >> 8) | (cellPtrs[i] << 8);
+          const uint8_t* cp = p + off;
+          ReadVarint(cp); ReadVarint(cp); ReadVarint(cp);
+
           uint64_t ser[18];
           int nSer = 0;
           while (nSer < 18 && cp < p + pageSize) {
-            if (nSer == 0) { ser[nSer++] = ReadVarint(cp); continue; } // header size varint
+            if (nSer == 0) { ser[nSer++] = ReadVarint(cp); continue; }
             ser[nSer++] = ReadVarint(cp);
           }
-          // Now skip column 0 (creation_utc) data
-          // Process columns 1-17 in order
+
           std::string host_key, name, value, path;
           int64_t expires_utc = 0;
-          int is_secure = 0, is_httponly = 0, has_expires = 1, samesite = -1;
-          int colIdx = 0;
+          int is_secure = 0, is_httponly = 0, samesite = -1;
 
           auto readText = [&](uint64_t st) -> std::string {
             if (st < 12) return {};
-            size_t len = (st - 12) / 2;
-            std::string s(reinterpret_cast<const char*>(cp), len);
-            cp += len;
-            return s;
+            std::string s(reinterpret_cast<const char*>(cp), (st - 12) / 2);
+            cp += (st - 12) / 2; return s;
           };
           auto readInt = [&](uint64_t st) -> int64_t {
             int64_t v = 0;
             if (st == 0) return 0;
             if (st == 1) { v = (int8_t)*cp; cp += 1; }
-            else if (st == 2) { v = (int16_t)((cp[0] << 8) | cp[1]); cp += 2; }
-            else if (st == 3) { v = (int32_t)((cp[0] << 16) | (cp[1] << 8) | cp[2]); if (v & 0x800000) v |= ~0xffffff; cp += 3; }
-            else if (st == 4) { v = (int32_t)((cp[0] << 24) | (cp[1] << 16) | (cp[2] << 8) | cp[3]); cp += 4; }
+            else if (st == 2) { v = (int16_t)((cp[0]<<8)|cp[1]); cp += 2; }
+            else if (st == 3) { int32_t x = (cp[0]<<16)|(cp[1]<<8)|cp[2]; if (x & 0x800000) x |= ~0xffffff; v = x; cp += 3; }
+            else if (st == 4) { v = (int32_t)((cp[0]<<24)|(cp[1]<<16)|(cp[2]<<8)|cp[3]); cp += 4; }
             else if (st == 5) { cp += 6; }
-            else if (st == 6) {
-              uint64_t uv = ((uint64_t)cp[0] << 56) | ((uint64_t)cp[1] << 48) |
-                            ((uint64_t)cp[2] << 40) | ((uint64_t)cp[3] << 32) |
-                            ((uint64_t)cp[4] << 24) | ((uint64_t)cp[5] << 16) |
-                            ((uint64_t)cp[6] << 8)  | (uint64_t)cp[7];
-              v = (int64_t)uv; cp += 8;
-            }
+            else if (st == 6) { uint64_t uv = ((uint64_t)cp[0]<<56)|((uint64_t)cp[1]<<48)|((uint64_t)cp[2]<<40)|((uint64_t)cp[3]<<32)|((uint64_t)cp[4]<<24)|((uint64_t)cp[5]<<16)|((uint64_t)cp[6]<<8)|(uint64_t)cp[7]; v = (int64_t)uv; cp += 8; }
             else if (st == 7) { cp += 8; }
             else if (st == 8) { v = 0; }
             else if (st == 9) { v = 1; }
             return v;
           };
 
-          // Col 0: creation_utc (INTEGER) - skip
-          if (ser[1+0] >= 12) cp += (ser[1+0] - 12) / 2;
-          else readInt(ser[1+0]);
-
-          // Col 1: host_key (TEXT)
-          if (colIdx < 18 && ser[1+1] >= 12) { host_key = readText(ser[1+1]); colIdx++; } else colIdx++;
+          // Col 0: creation_utc - skip
+          if (ser[1] >= 12) cp += (ser[1] - 12) / 2; else readInt(ser[1]);
+          // Col 1: host_key
+          if (ser[2] >= 12) host_key = readText(ser[2]);
           // Col 2: top_frame_site_key - skip
-          if (colIdx < 18 && ser[1+2] >= 12) { cp += (ser[1+2] - 12) / 2; colIdx++; } else colIdx++;
-          // Col 3: name (TEXT)
-          if (colIdx < 18 && ser[1+3] >= 12) { name = readText(ser[1+3]); colIdx++; } else colIdx++;
-          // Col 4: value (TEXT)
-          if (colIdx < 18 && ser[1+4] >= 12) { value = readText(ser[1+4]); colIdx++; } else colIdx++;
-          // Col 5: path (TEXT)
-          if (colIdx < 18 && ser[1+5] >= 12) { path = readText(ser[1+5]); colIdx++; } else colIdx++;
-          // Col 6: expires_utc (INTEGER)
-          if (colIdx < 18) { expires_utc = readInt(ser[1+6]); colIdx++; } else colIdx++;
-          // Col 7: is_secure (INTEGER)
-          if (colIdx < 18) { is_secure = (int)readInt(ser[1+7]); colIdx++; } else colIdx++;
-          // Col 8: is_httponly (INTEGER)
-          if (colIdx < 18) { is_httponly = (int)readInt(ser[1+8]); colIdx++; } else colIdx++;
-          // Skip remaining columns...
+          if (ser[3] >= 12) cp += (ser[3] - 12) / 2;
+          // Col 3: name
+          if (ser[4] >= 12) name = readText(ser[4]);
+          // Col 4: value
+          if (ser[5] >= 12) value = readText(ser[5]);
+          // Col 5: path
+          if (ser[6] >= 12) path = readText(ser[6]);
+          // Col 6: expires_utc
+          expires_utc = readInt(ser[7]);
+          // Col 7: is_secure
+          is_secure = (int)readInt(ser[8]);
+          // Col 8: is_httponly
+          is_httponly = (int)readInt(ser[9]);
 
           if (host_key.empty() || name.empty()) continue;
 
-          // Prepend '.' for WebView2 domain format
-          std::string domain = host_key;
-
           ICoreWebView2Cookie* c = nullptr;
-          std::wstring wdomain = UTF8ToWide(domain);
-          std::wstring wname = UTF8ToWide(name);
-          std::wstring wvalue = UTF8ToWide(value);
-          std::wstring wpath = UTF8ToWide(path.empty() ? "/" : path);
-
-          HRESULT hr2 = mgr->CreateCookie(wname.c_str(), wvalue.c_str(),
-                                           wdomain.c_str(), wpath.c_str(), &c);
+          HRESULT hr2 = mgr->CreateCookie(
+              UTF8ToWide(name).c_str(), UTF8ToWide(value).c_str(),
+              UTF8ToWide(host_key).c_str(), UTF8ToWide(path.empty() ? "/" : path).c_str(), &c);
           if (FAILED(hr2) || !c) continue;
-
           c->put_IsSecure(is_secure ? TRUE : FALSE);
           c->put_IsHttpOnly(is_httponly ? TRUE : FALSE);
-          if (samesite >= 0)
-            c->put_SameSite(static_cast<COREWEBVIEW2_COOKIE_SAME_SITE_KIND>(samesite));
-          if (has_expires && expires_utc > 0) {
-            // Chrome time: microseconds since 1601-01-01
-            // WebView2: seconds since 1601-01-01
-            c->put_Expires((double)expires_utc / 1000000.0);
-          }
-
+          if (samesite >= 0) c->put_SameSite(static_cast<COREWEBVIEW2_COOKIE_SAME_SITE_KIND>(samesite));
+          if (expires_utc > 0) c->put_Expires((double)expires_utc / 1000000.0);
           mgr->AddOrUpdateCookie(c);
           c->Release();
           imported++;
         }
       } else if (type == 0x05) {
         for (int i = 0; i < cells; i++) {
-          uint16_t off = cellPtrs[i];
-          off = (off >> 8) | (off << 8);
-          const uint8_t* cell = p + off;
-          uint32_t childPage = (cell[0] << 24) | (cell[1] << 16) | (cell[2] << 8) | cell[3];
-          Walk(childPage);
+          uint16_t off = (cellPtrs[i] >> 8) | (cellPtrs[i] << 8);
+          uint32_t child = (p[off+0]<<24)|(p[off+1]<<16)|(p[off+2]<<8)|p[off+3];
+          Walk(child);
         }
       }
     }
   };
 
-  CookieWalker walker{data, pageSize, mgr, imported};
-  walker.Walk(rootPage);
+  Walker{data, pageSize, mgr, imported}.Walk(rootPage);
+  return imported;
+}
+
+void BrowserWindow::ImportChromeCookies() {
+  if (!webview_) return;
+
+  ICoreWebView2_2* wv2 = nullptr;
+  HRESULT hr = webview_->QueryInterface(IID_ICoreWebView2_2, (void**)&wv2);
+  if (FAILED(hr) || !wv2) return;
+  ICoreWebView2CookieManager* mgr = nullptr;
+  wv2->get_CookieManager(&mgr);
+  wv2->Release();
+  if (!mgr) return;
+
+  struct BrowserInfo {
+    const wchar_t* env;
+    const wchar_t* subpath;
+    const char* table;
+    const wchar_t* name;
+  };
+
+  BrowserInfo browsers[] = {
+    {L"LOCALAPPDATA", L"\\Google\\Chrome\\User Data\\Default\\Cookies", "cookies", L"Chrome"},
+    {L"LOCALAPPDATA", L"\\Microsoft\\Edge\\User Data\\Default\\Cookies", "cookies", L"Edge"},
+    {L"LOCALAPPDATA", L"\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Cookies", "cookies", L"Brave"},
+    {L"LOCALAPPDATA", L"\\Chromium\\User Data\\Default\\Cookies", "cookies", L"Chromium"},
+    {L"LOCALAPPDATA", L"\\Vivaldi\\User Data\\Default\\Cookies", "cookies", L"Vivaldi"},
+    {L"APPDATA", L"\\Opera Software\\Opera Stable\\Cookies", "cookies", L"Opera"},
+  };
+
+  UINT32 total = 0;
+  std::wstring foundList;
+
+  for (auto& b : browsers) {
+    wchar_t path[MAX_PATH];
+    GetEnvironmentVariableW(b.env, path, MAX_PATH);
+    wcscat_s(path, b.subpath);
+
+    DWORD attr = GetFileAttributesW(path);
+    if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY)) continue;
+
+    UINT32 n = ImportCookiesFromFile(mgr, path, b.table);
+    if (n > 0 && n != UINT32_MAX) {
+      total += n;
+      if (!foundList.empty()) foundList += L", ";
+      foundList += b.name;
+      foundList += L" (" + std::to_wstring(n) + L")";
+    }
+  }
+
   mgr->Release();
 
-  char msg[64];
-  snprintf(msg, sizeof(msg), "%u cookies geimporteerd uit Chrome.", imported);
-  MessageBoxA(nullptr, msg, "Chrome Import", MB_OK);
+  wchar_t msg[512];
+  if (total > 0) {
+    swprintf_s(msg, L"%u cookies geimporteerd uit: %s", total, foundList.c_str());
+  } else {
+    wcscpy_s(msg, L"Geen cookies gevonden op deze PC.");
+  }
+  MessageBoxW(nullptr, msg, L"Cookie Import", MB_OK);
 }
 
 
