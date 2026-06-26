@@ -25,6 +25,8 @@ public:
   void AutoFillPassword();
   void ViewPasswords();
   void ClearPasswords();
+  void ToggleAdBlock();
+  bool IsAdBlockEnabled() const { return adBlockEnabled_; }
 
   ICoreWebView2* WebView() const { return webview_; }
 
@@ -33,6 +35,7 @@ private:
   ICoreWebView2Controller* controller_ = nullptr;
   ICoreWebView2* webview_ = nullptr;
   bool isDark_ = false;
+  bool adBlockEnabled_ = false;
 
   friend struct EnvHandler;
   friend struct CtrlHandler;

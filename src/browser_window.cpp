@@ -429,27 +429,17 @@ struct PmSaveHandler : ICoreWebView2ExecuteScriptCompletedHandler {
   STDMETHOD(Invoke)(HRESULT, LPCWSTR resultObjectAsJson) override {
     if (!resultObjectAsJson) return S_OK;
     std::string json = WideToUTF8(resultObjectAsJson);
-    // JS returns JSON string like "\"user\\x01pass\"" or "null"
-    // Strip surrounding quotes and unescape
+    // resultObjectAsJson is a JSON string: e.g. "user|||pass"
+    // Strip surrounding quotes
     if (json.size() < 2) return S_OK;
-    std::string raw;
-    for (size_t i = 1; i < json.size() - 1; ++i) {
-      if (json[i] == '\\' && i + 1 < json.size() - 1) {
-        if (json[i + 1] == '\\') raw += '\\', ++i;
-        else if (json[i + 1] == 'x' && i + 3 < json.size() - 1) {
-          // \x01 style escape
-          raw += static_cast<char>(std::stoi(json.substr(i + 2, 2), nullptr, 16));
-          i += 3;
-        } else { raw += json[i]; }
-      } else { raw += json[i]; }
-    }
-    size_t sep = raw.find('\x01');
-    if (sep == std::string::npos || sep == 0 || sep == raw.size() - 1) {
+    std::string raw = json.substr(1, json.size() - 2);
+    size_t sep = raw.find("|||");
+    if (sep == std::string::npos || sep == 0 || sep == raw.size() - 3) {
       MessageBoxA(nullptr, "Geen inlogformulier gevonden op deze pagina.", "Wachtwoord", MB_OK);
       return S_OK;
     }
     std::string user = raw.substr(0, sep);
-    std::string pass = raw.substr(sep + 1);
+    std::string pass = raw.substr(sep + 3);
     if (user.empty() || pass.empty()) {
       MessageBoxA(nullptr, "Vul eerst gebruikersnaam en wachtwoord in.", "Wachtwoord", MB_OK);
       return S_OK;
@@ -461,7 +451,6 @@ struct PmSaveHandler : ICoreWebView2ExecuteScriptCompletedHandler {
     std::string encodedUser = Base64Encode(user);
     std::string encodedPass = Base64Encode(pass);
 
-    // Read existing file
     std::vector<std::string> lines;
     HANDLE hFile = CreateFileW(pwPath.c_str(), GENERIC_READ, FILE_SHARE_READ,
                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -482,7 +471,6 @@ struct PmSaveHandler : ICoreWebView2ExecuteScriptCompletedHandler {
       CloseHandle(hFile);
     }
 
-    // Update existing or append
     bool updated = false;
     std::string newLine = encodedDomain + '\x01' + encodedUser + '\x01' + encodedPass;
     for (auto& line : lines) {
@@ -495,7 +483,6 @@ struct PmSaveHandler : ICoreWebView2ExecuteScriptCompletedHandler {
     }
     if (!updated) lines.push_back(newLine);
 
-    // Write back
     hFile = CreateFileW(pwPath.c_str(), GENERIC_WRITE, 0, nullptr,
                         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile != INVALID_HANDLE_VALUE) {
@@ -518,20 +505,20 @@ void BrowserWindow::SavePassword() {
   CoTaskMemFree(src);
 
   const wchar_t* script =
-    LR"(JSON.stringify((function(){
-      var f=document.querySelector('form');
-      if(!f)return '\x01';
-      var inputs=f.querySelectorAll('input');
-      var user='',pass='';
-      for(var i=0;i<inputs.length;i++){
-        var inp=inputs[i];
-        if(inp.type==='password')pass=inp.value;
-        else if(inp.type==='email'||inp.type==='text'){
-          if(!user)user=inp.value;
-        }
-      }
-      return user+'\x01'+pass;
-    })()))";
+    L"(function(){"
+    L"var f=document.querySelector('form');"
+    L"if(!f)return '|||';"
+    L"var inputs=f.querySelectorAll('input');"
+    L"var user='',pass='';"
+    L"for(var i=0;i<inputs.length;i++){"
+    L"var inp=inputs[i];"
+    L"if(inp.type==='password')pass=inp.value;"
+    L"else if(inp.type==='email'||inp.type==='text'){"
+    L"if(!user)user=inp.value;"
+    L"}"
+    L"}"
+    L"return user+'|||'+pass;"
+    L"})()";
 
   webview_->ExecuteScript(script, new PmSaveHandler(this, domain));
 }
@@ -607,7 +594,6 @@ void BrowserWindow::AutoFillPassword() {
   std::wstring wuser = UTF8ToWide(userDecoded);
   std::wstring wpass = UTF8ToWide(passDecoded);
 
-  // Escape single quotes for JS
   auto escape = [](std::wstring& s) {
     size_t p = 0;
     while ((p = s.find(L'\'', p)) != std::wstring::npos) {
@@ -618,9 +604,9 @@ void BrowserWindow::AutoFillPassword() {
   escape(wuser);
   escape(wpass);
 
-  std::wstring script = L"JSON.stringify((function(u,p){"
+  std::wstring script = L"(function(u,p){"
     L"var f=document.querySelector('form');"
-    L"if(!f)return'';"
+    L"if(!f)return;"
     L"var inputs=f.querySelectorAll('input');"
     L"var fu=false,fp=false;"
     L"for(var i=0;i<inputs.length;i++){"
@@ -629,8 +615,7 @@ void BrowserWindow::AutoFillPassword() {
     L"else if((inp.type==='email'||inp.type==='text')&&!fu){inp.value=u;fu=true;}"
     L"else if(inp.type==='email'||inp.type==='text'){inp.value=u;}"
     L"}"
-    L"return fu||fp?'ok':'';"
-    L"})('" + wuser + L"','" + wpass + L"'))";
+    L"})('" + wuser + L"','" + wpass + L"')";
 
   webview_->ExecuteScript(script.c_str(), new PmAutofillHandler(this, wuser, wpass));
   MessageBoxA(nullptr, "Auto-fill uitgevoerd.", "Auto-fill", MB_OK);
@@ -690,5 +675,40 @@ void BrowserWindow::ClearPasswords() {
     MessageBoxA(nullptr, "Alle wachtwoorden gewist.", "Wachtwoorden", MB_OK);
   } else {
     MessageBoxA(nullptr, "Geen wachtwoorden om te wissen.", "Wachtwoorden", MB_OK);
+  }
+}
+
+// -------------------------------------------------------------------
+// Ad Blocker
+// -------------------------------------------------------------------
+void BrowserWindow::ToggleAdBlock() {
+  adBlockEnabled_ = !adBlockEnabled_;
+  if (!webview_) return;
+
+  if (adBlockEnabled_) {
+    const wchar_t* script =
+      L"(function(){"
+      L"var s=document.createElement('style');"
+      L"s.id='__myadblock';"
+      L"s.textContent='"
+      L"[class*=\"ad-\"],[class*=\"ads\"],[id*=\"ad-\"],[id*=\"ads\"],"
+      L".ad,.ads,.adslot,.ad-container,.ad-wrapper,.ad-banner,"
+      L".ad-placeholder,.google-ads,.adsbygoogle,.adsense,.sponsored,"
+      L".sponsored-content,.advertisement,.ad-box,.ad-frame,.ad-text,"
+      L".ad-top,.ad-left,.ad-right,.ad-bottom,.ad-middle,"
+      L".ad-300x250,.ad-728x90,.ad-160x600,.ad-336x280,.ad-970x90,.ad-970x250,.ad-300x600,"
+      L"[href*=\"doubleclick.net\"],[src*=\"doubleclick.net\"],"
+      L"[href*=\"googleadservices.com\"],[src*=\"googleadservices.com\"]{display:none!important}"
+      L"';"
+      L"document.head.appendChild(s);"
+      L"})()";
+    webview_->ExecuteScript(script, nullptr);
+  } else {
+    const wchar_t* script =
+      L"(function(){"
+      L"var s=document.getElementById('__myadblock');"
+      L"if(s)s.remove();"
+      L"})()";
+    webview_->ExecuteScript(script, nullptr);
   }
 }
