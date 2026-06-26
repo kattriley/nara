@@ -26,10 +26,7 @@ public:
   void ViewPasswords();
   void ClearPasswords();
 
-  void OpenExtensionsFolder();
-  void LoadExtensions();
-  void ToggleExtension(const std::wstring& name);
-  bool IsExtensionEnabled(const std::wstring& name);
+  void ImportChromeCookies();
 
   ICoreWebView2* WebView() const { return webview_; }
 
@@ -43,5 +40,4 @@ private:
   friend struct CtrlHandler;
   friend struct PmSaveHandler;
   friend struct PmAutofillHandler;
-  friend struct ExtHandler;
 };

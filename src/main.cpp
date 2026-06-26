@@ -23,12 +23,8 @@ static void CreateToolbar(HWND parent) {
   btn(kIdExportCookies,   L"Export");
   x += 8;
   btn(kIdPasswordsButton, L"Passwords");
-  btn(kIdExtensionsButton, L"Ext");
+  btn(kIdImportChrome,    L"Chrome");
   btn(kIdSettingsButton,  L"Settings");
-  x += 8;
-  btn(kIdAdblockButton,   L"AdBlock");
-  btn(kIdVolumeButton,    L"Volume");
-  btn(kIdDiscTokenButton, L"DiscToken");
 }
 
 static void ResizeChildren(HWND hwnd) {
@@ -43,20 +39,6 @@ static void UpdateToolbarBrush(bool dark) {
   if (gToolbarBrush) DeleteObject(gToolbarBrush);
   gToolbarBrush = CreateSolidBrush(dark ? RGB(45, 45, 45) : GetSysColor(COLOR_MENU));
   InvalidateRect(gMainHwnd, nullptr, TRUE);
-}
-
-static void UpdateExtButtons() {
-  if (!gBrowser) return;
-  auto setBtn = [](int id, const wchar_t* name, const wchar_t* label) {
-    HWND btn = GetDlgItem(gMainHwnd, id);
-    if (!btn) return;
-    wchar_t txt[32];
-    swprintf_s(txt, L"%s %s", label, gBrowser->IsExtensionEnabled(name) ? L"\u2713" : L"\u2717");
-    SetWindowTextW(btn, txt);
-  };
-  setBtn(kIdAdblockButton,   L"adblock",  L"AB");
-  setBtn(kIdVolumeButton,    L"volume",   L"Vol");
-  setBtn(kIdDiscTokenButton, L"dectoken", L"DTok");
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -97,15 +79,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case kIdDiscordButton:
           if (gBrowser) gBrowser->Navigate(L"https://discord.com");
           break;
-        case kIdAdblockButton:
-          if (gBrowser) { gBrowser->ToggleExtension(L"adblock"); UpdateExtButtons(); }
-          break;
-        case kIdVolumeButton:
-          if (gBrowser) { gBrowser->ToggleExtension(L"volume"); UpdateExtButtons(); }
-          break;
-        case kIdDiscTokenButton:
-          if (gBrowser) { gBrowser->ToggleExtension(L"dectoken"); UpdateExtButtons(); }
-          break;
         case kIdImportCookies:
           if (gBrowser) gBrowser->ImportCookies();
           break;
@@ -115,34 +88,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case kIdAccelReload:
           if (gBrowser) gBrowser->Reload();
           break;
-        case kIdExtensionsButton: {
-          HMENU menu = CreatePopupMenu();
-          auto addExt = [&](int id, const wchar_t* name) {
-            bool on = gBrowser && gBrowser->IsExtensionEnabled(name);
-            wchar_t buf[64];
-            swprintf_s(buf, L"%s (%s)", name, on ? L"AAN" : L"UIT");
-            AppendMenuW(menu, MF_STRING, id, buf);
-          };
-          addExt(kIdAdblockButton, L"AdBlock");
-          addExt(kIdVolumeButton, L"Volume");
-          addExt(kIdDiscTokenButton, L"DiscToken");
-          AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-          AppendMenuW(menu, MF_STRING, kIdExtReload,  L"Reload Scripts");
-          AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-          AppendMenuW(menu, MF_STRING, 9999, L"Open Extensions Folder\u2026");
-          POINT pt;
-          GetCursorPos(&pt);
-          SetForegroundWindow(hwnd);
-          UINT cmd = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD,
-                                    pt.x, pt.y, 0, hwnd, nullptr);
-          DestroyMenu(menu);
-          if (cmd == kIdAdblockButton && gBrowser) { gBrowser->ToggleExtension(L"adblock"); UpdateExtButtons(); }
-          else if (cmd == kIdVolumeButton && gBrowser) { gBrowser->ToggleExtension(L"volume"); UpdateExtButtons(); }
-          else if (cmd == kIdDiscTokenButton && gBrowser) { gBrowser->ToggleExtension(L"dectoken"); UpdateExtButtons(); }
-          else if (cmd == kIdExtReload && gBrowser) gBrowser->LoadExtensions();
-          else if (cmd == 9999 && gBrowser) gBrowser->OpenExtensionsFolder();
+        case kIdImportChrome:
+          if (gBrowser) gBrowser->ImportChromeCookies();
           break;
-        }
         case kIdSettingsButton: {
           HMENU menu = CreatePopupMenu();
           AppendMenuW(menu, MF_STRING, kIdToggleTheme,
@@ -247,7 +195,6 @@ int APIENTRY WinMain(HINSTANCE hInstance,
   BrowserWindow browser;
   gBrowser = &browser;
   browser.Initialize(hwnd);
-  UpdateExtButtons();
 
   MSG msg;
   while (GetMessage(&msg, nullptr, 0, 0)) {
