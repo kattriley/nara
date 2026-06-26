@@ -25,6 +25,10 @@ static void CreateToolbar(HWND parent) {
   btn(kIdPasswordsButton, L"Passwords");
   btn(kIdExtensionsButton, L"Ext");
   btn(kIdSettingsButton,  L"Settings");
+  x += 8;
+  btn(kIdAdblockButton,   L"AdBlock");
+  btn(kIdVolumeButton,    L"Volume");
+  btn(kIdDiscTokenButton, L"DiscToken");
 }
 
 static void ResizeChildren(HWND hwnd) {
@@ -78,6 +82,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
           break;
         case kIdDiscordButton:
           if (gBrowser) gBrowser->Navigate(L"https://discord.com");
+          break;
+        case kIdAdblockButton:
+          if (gBrowser) gBrowser->Navigate(L"https://chromewebstore.google.com/detail/adblock-blokkeer-reclame/gighmmpiobklfepjocnamgkkbiglidom");
+          break;
+        case kIdVolumeButton:
+          if (gBrowser) gBrowser->Navigate(L"https://chromewebstore.google.com/detail/volume-master/jghecgabfgfdldnmbfkhmffcabddioke");
+          break;
+        case kIdDiscTokenButton:
+          if (gBrowser) gBrowser->Navigate(L"https://chromewebstore.google.com/detail/discord-token-login/kfjglmgfjedhhcddpfgfogkahmenikan");
           break;
         case kIdImportCookies:
           if (gBrowser) gBrowser->ImportCookies();

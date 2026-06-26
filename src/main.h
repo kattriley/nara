@@ -15,6 +15,9 @@ constexpr int kIdExportCookies    = 105;
 constexpr int kIdSettingsButton   = 106;
 constexpr int kIdPasswordsButton  = 107;
 constexpr int kIdExtensionsButton = 110;
+constexpr int kIdAdblockButton    = 111;
+constexpr int kIdVolumeButton     = 112;
+constexpr int kIdDiscTokenButton  = 113;
 
 constexpr int kIdAccelReload      = 1001;
 
