@@ -678,37 +678,4 @@ void BrowserWindow::ClearPasswords() {
   }
 }
 
-// -------------------------------------------------------------------
-// Ad Blocker
-// -------------------------------------------------------------------
-void BrowserWindow::ToggleAdBlock() {
-  adBlockEnabled_ = !adBlockEnabled_;
-  if (!webview_) return;
 
-  if (adBlockEnabled_) {
-    const wchar_t* script =
-      L"(function(){"
-      L"var s=document.createElement('style');"
-      L"s.id='__myadblock';"
-      L"s.textContent='"
-      L"[class*=\"ad-\"],[class*=\"ads\"],[id*=\"ad-\"],[id*=\"ads\"],"
-      L".ad,.ads,.adslot,.ad-container,.ad-wrapper,.ad-banner,"
-      L".ad-placeholder,.google-ads,.adsbygoogle,.adsense,.sponsored,"
-      L".sponsored-content,.advertisement,.ad-box,.ad-frame,.ad-text,"
-      L".ad-top,.ad-left,.ad-right,.ad-bottom,.ad-middle,"
-      L".ad-300x250,.ad-728x90,.ad-160x600,.ad-336x280,.ad-970x90,.ad-970x250,.ad-300x600,"
-      L"[href*=\"doubleclick.net\"],[src*=\"doubleclick.net\"],"
-      L"[href*=\"googleadservices.com\"],[src*=\"googleadservices.com\"]{display:none!important}"
-      L"';"
-      L"document.head.appendChild(s);"
-      L"})()";
-    webview_->ExecuteScript(script, nullptr);
-  } else {
-    const wchar_t* script =
-      L"(function(){"
-      L"var s=document.getElementById('__myadblock');"
-      L"if(s)s.remove();"
-      L"})()";
-    webview_->ExecuteScript(script, nullptr);
-  }
-}

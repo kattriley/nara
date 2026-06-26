@@ -22,7 +22,6 @@ static void CreateToolbar(HWND parent) {
   btn(kIdExportCookies,   L"Export");
   x += 8;
   btn(kIdPasswordsButton, L"Passwords");
-  btn(kIdAdBlockButton,   L"AdBlock");
   btn(kIdSettingsButton,  L"Settings");
 }
 
@@ -128,14 +127,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
           break;
         case kIdPmClear:
           if (gBrowser) gBrowser->ClearPasswords();
-          break;
-        case kIdAdBlockButton:
-          if (gBrowser) {
-            gBrowser->ToggleAdBlock();
-            HWND btn = GetDlgItem(hwnd, kIdAdBlockButton);
-            if (btn) SetWindowTextW(btn, gBrowser->IsAdBlockEnabled() ? L"AdBlock ON" : L"AdBlock");
-            InvalidateRect(gMainHwnd, nullptr, TRUE);
-          }
           break;
       }
       break;
