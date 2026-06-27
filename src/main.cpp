@@ -14,15 +14,15 @@ static void CreateToolbar(HWND parent) {
       x, y, kBtnW, kBtnH, parent, (HMENU)(INT_PTR)id, nullptr, nullptr);
     x += kBtnW + kBtnGap;
   };
-  btn(kIdGoogleButton,    L"Google");
-  btn(kIdPinterestButton, L"Pinterest");
-  btn(kIdRobloxButton,    L"Roblox");
-  btn(kIdDiscordButton,   L"Discord");
-  btn(kIdSpotifyButton,   L"Spotify");
+  btn(kIdGoogleButton,    L"\xD83D\xDD0D Google");
+  btn(kIdPinterestButton, L"\xD83D\xDCCC Pinterest");
+  btn(kIdRobloxButton,    L"\x2B50 Roblox");
+  btn(kIdDiscordButton,   L"\xD83C\xDFAE Discord");
+  btn(kIdSpotifyButton,   L"\xD83C\xDFB5 Spotify");
   x += 8;
-  btn(kIdImportCookies,   L"Import");
-  btn(kIdExportCookies,   L"Export");
-  btn(kIdSettingsButton,  L"Settings");
+  btn(kIdImportCookies,   L"\xD83D\xDCE5 Import");
+  btn(kIdExportCookies,   L"\xD83D\xDCE4 Export");
+  btn(kIdSettingsButton,  L"\x2699 Settings");
 }
 
 static void ResizeChildren(HWND hwnd) {
@@ -35,7 +35,7 @@ static void ResizeChildren(HWND hwnd) {
 
 static void UpdateToolbarBrush(bool dark) {
   if (gToolbarBrush) DeleteObject(gToolbarBrush);
-  gToolbarBrush = CreateSolidBrush(dark ? RGB(45, 45, 45) : GetSysColor(COLOR_MENU));
+  gToolbarBrush = CreateSolidBrush(dark ? RGB(50, 50, 55) : RGB(240, 242, 245));
   InvalidateRect(gMainHwnd, nullptr, TRUE);
 }
 

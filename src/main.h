@@ -20,10 +20,10 @@ constexpr int kIdAccelReload      = 1001;
 
 constexpr int kIdToggleTheme      = 200;
 
-constexpr int kToolbarHeight = 38;
-constexpr int kBtnW = 72;
-constexpr int kBtnH = 26;
-constexpr int kBtnGap = 4;
+constexpr int kToolbarHeight = 36;
+constexpr int kBtnW = 82;
+constexpr int kBtnH = 24;
+constexpr int kBtnGap = 3;
 constexpr int kBtnTop = 6;
 
 extern HWND gMainHwnd;
