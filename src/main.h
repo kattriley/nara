@@ -25,6 +25,7 @@ constexpr int kIdAddrEdit         = 117;
 constexpr int kIdGoAddr           = 118;
 constexpr int kIdNewTab           = 119;
 constexpr int kIdTabBase          = 500;
+constexpr int kIdTabCloseBase     = 600;
 
 constexpr int kIdAccelReload      = 1001;
 constexpr UINT kMsgCreateTab     = WM_APP + 1;

@@ -193,7 +193,8 @@ static void UpdateTabBar(HWND hwnd) {
       child = next;
       continue;
     }
-    if (id >= kIdTabBase && id < kIdTabBase + 100) {
+    if ((id >= kIdTabBase && id < kIdTabBase + 100) ||
+        (id >= kIdTabCloseBase && id < kIdTabCloseBase + 100)) {
       DestroyWindow(child);
     }
     child = next;
@@ -214,11 +215,13 @@ static void UpdateTabBar(HWND hwnd) {
   for (int i = 0; i < nTabs && i < 20; i++) {
     std::wstring label = gBrowser->TabTitle(i);
     if (label.empty()) label = std::wstring(T(S_TAB_PREFIX)) + std::to_wstring(i + 1);
-    if (label.size() > 16) { label = label.substr(0, 14) + L".."; }
+    if (label.size() > 12) { label = label.substr(0, 10) + L".."; }
 
+    // Tab label button
+    int btnW = tabW - 18;
     HWND hBtn = CreateWindowExW(0, L"BUTTON", label.c_str(),
       WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-      x, 0, tabW, kTabBarHeight, hwnd, (HMENU)(INT_PTR)(kIdTabBase + i),
+      x, 0, btnW, kTabBarHeight, hwnd, (HMENU)(INT_PTR)(kIdTabBase + i),
       nullptr, nullptr);
     if (hBtn && gTabFont) {
       SendMessageW(hBtn, WM_SETFONT, (WPARAM)gTabFont, TRUE);
@@ -227,6 +230,14 @@ static void UpdateTabBar(HWND hwnd) {
         InvalidateRect(hBtn, nullptr, TRUE);
       }
     }
+
+    // Close X button
+    HWND hClose = CreateWindowExW(0, L"BUTTON", L"\xD7",
+      WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+      x + btnW, 0, 18, kTabBarHeight, hwnd, (HMENU)(INT_PTR)(kIdTabCloseBase + i),
+      nullptr, nullptr);
+    if (hClose && gTabFont) SendMessageW(hClose, WM_SETFONT, (WPARAM)gTabFont, TRUE);
+
     x += tabW + 2;
   }
 }
@@ -427,6 +438,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
               int tabIdx = LOWORD(wParam) - kIdTabBase;
               if (tabIdx >= 0 && tabIdx < gBrowser->TabCount()) {
                 gBrowser->SwitchTab(tabIdx);
+                UpdateTabBar(hwnd);
+              }
+            }
+          }
+          // Tab close
+          if (LOWORD(wParam) >= kIdTabCloseBase && LOWORD(wParam) < kIdTabCloseBase + 100) {
+            if (gBrowser) {
+              int tabIdx = LOWORD(wParam) - kIdTabCloseBase;
+              if (tabIdx >= 0 && tabIdx < gBrowser->TabCount()) {
+                gBrowser->CloseTab(tabIdx);
                 UpdateTabBar(hwnd);
               }
             }
