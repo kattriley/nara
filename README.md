@@ -72,3 +72,18 @@ src/
 ## Licentie
 
 MIT
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%APPDATA%\Nara\
